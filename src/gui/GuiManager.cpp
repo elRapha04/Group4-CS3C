@@ -26,13 +26,39 @@ namespace GUI {
     }
 
     void GuiManager::renderUI() {
-        // Removed DockSpaceOverViewport as it requires docking branch
-        // ImGui::DockSpaceOverViewport(ImGui::GetMainViewport());
-        
+        // Manual Layout since Docking is disabled
+        ImGuiViewport* viewport = ImGui::GetMainViewport();
+        float w = viewport->Size.x;
+        float h = viewport->Size.y;
+        float x = viewport->Pos.x;
+        float y = viewport->Pos.y;
+
+        // Grid Config
+        float leftWidth = w * 0.25f;
+        float rightWidth = w * 0.25f;
+        float midWidth = w - leftWidth - rightWidth;
+        float topHeight = h * 0.6f;
+        float bottomHeight = h - topHeight;
+
+        // 1. Source Code (Top Left)
+        ImGui::SetNextWindowPos(ImVec2(x, y));
+        ImGui::SetNextWindowSize(ImVec2(leftWidth, topHeight));
         drawCodeEditor();
+
+        // 2. Tokens (Bottom Left)
+        ImGui::SetNextWindowPos(ImVec2(x, y + topHeight));
+        ImGui::SetNextWindowSize(ImVec2(leftWidth, bottomHeight));
         drawTokenTable();
-        drawParserView();
+
+        // 3. Regex Playground (Middle)
+        ImGui::SetNextWindowPos(ImVec2(x + leftWidth, y));
+        ImGui::SetNextWindowSize(ImVec2(midWidth, h));
         drawRegexPlayground();
+
+        // 4. Parser View (Right)
+        ImGui::SetNextWindowPos(ImVec2(x + leftWidth + midWidth, y));
+        ImGui::SetNextWindowSize(ImVec2(rightWidth, h));
+        drawParserView();
     }
 
     void GuiManager::drawCodeEditor() {
