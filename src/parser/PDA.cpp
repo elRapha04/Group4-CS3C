@@ -20,7 +20,7 @@ namespace Automata {
         // We simulate a stack, so 'push' adds to back.
         // Stack bottom is index 0.
         parseStack.push_back({TERMINAL, "EOF"}); // End marker
-        parseStack.push_back({NON_TERMINAL, "Expr"});
+        parseStack.push_back({NON_TERMINAL, "Statement"});
     }
 
     void PDA::loadInput(const std::vector<Token>& tokens) {
@@ -41,10 +41,21 @@ namespace Automata {
             case TOKEN_OPERATOR_EQ: return "="; // Assignment not in simple expression grammar usually, but user asked for 'x = ...'
             case TOKEN_LPAREN: return "(";
             case TOKEN_RPAREN: return ")";
+            case TOKEN_LBRACE: return "{";
+            case TOKEN_RBRACE: return "}";
             case TOKEN_EOF: return "EOF";
             default: return "";
         }
     }
+
+    // ... (This function is helper, need to update PDA::step Logic for F)
+
+    // In PDA::step around line 215 (F expansion)
+    // We need to target the block handling F -> (E) | {E} | num | id
+    // I can't easily target multiple disparate blocks with one replace, so I'll assume current context
+    
+    // ... skipping to PDA::step implementation ... 
+
 
     // For the user request: x = 10 + 20
     // The grammar provided:
@@ -115,7 +126,7 @@ namespace Automata {
         if (top.type == TERMINAL) {
             if (top.value == "epsilon") {
                 parseStack.pop_back();
-                stepRecord.actionDesc = "Match Epsilon";
+                stepRecord.actionDesc = "Skip Empty (epsilon)";
                 history.push_back(stepRecord);
                 return true;
             }
@@ -126,12 +137,12 @@ namespace Automata {
                 } else {
                     isSuccess = true;
                 }
-                stepRecord.actionDesc = "Match " + top.value;
+                stepRecord.actionDesc = "Match Terminal '" + top.value + "'";
                 history.push_back(stepRecord);
                 return true;
             } else {
                 isError = true;
-                stepRecord.actionDesc = "Error: Expected " + top.value + ", got " + currentVal;
+                stepRecord.actionDesc = "Error: Expected '" + top.value + "', but found '" + currentVal + "'";
                 history.push_back(stepRecord);
                 return false;
             }
@@ -143,93 +154,101 @@ namespace Automata {
             std::string ruleName;
 
             // --- LL(1) Table Logic ---
+            // Renamed Non-Terminals for Clarity:
+            // S -> Statement
+            // E -> Expr
+            // E' -> Expr_Rest (Handles + or -)
+            // T -> Term
+            // T' -> Term_Rest (Handles * or /)
+            // F -> Factor
             
-            if (top.value == "S") {
+            if (top.value == "S" || top.value == "Statement") {
                 if (currentToken.type == TOKEN_IDENTIFIER) {
-                     // Lookahead 2 check? Or assume Logic
-                     // If we have id, check next token
                      if (currentTokenIndex + 1 < inputTokens.size() && 
                          inputTokens[currentTokenIndex + 1].type == TOKEN_OPERATOR_EQ) {
                          // S -> id = E
-                         production = {{TERMINAL, "id"}, {TERMINAL, "="}, {NON_TERMINAL, "E"}};
-                         ruleName = "S -> id = E";
+                         production = {{TERMINAL, "id"}, {TERMINAL, "="}, {NON_TERMINAL, "Expr"}};
+                         ruleName = "Statement -> Assignment (id = Expr)";
                      } else {
                          // S -> E
-                         production = {{NON_TERMINAL, "E"}};
-                         ruleName = "S -> E";
+                         production = {{NON_TERMINAL, "Expr"}};
+                         ruleName = "Statement -> Expression";
                      }
                 } else {
                     // S -> E
-                    production = {{NON_TERMINAL, "E"}};
-                    ruleName = "S -> E";
+                    production = {{NON_TERMINAL, "Expr"}};
+                    ruleName = "Statement -> Expression";
                 }
             }
-            else if (top.value == "E") {
+            else if (top.value == "E" || top.value == "Expr") {
                 // E -> T E'
-                if (currentVal == "id" || currentVal == "num" || currentVal == "(") {
-                    production = {{NON_TERMINAL, "T"}, {NON_TERMINAL, "E'"}};
-                    ruleName = "E -> T E'";
+                if (currentVal == "id" || currentVal == "num" || currentVal == "(" || currentVal == "{") {
+                    production = {{NON_TERMINAL, "Term"}, {NON_TERMINAL, "Expr_Rest"}};
+                    ruleName = "Expr -> Term + Rest";
                 } else {
                     isError = true;
                 }
             }
-            else if (top.value == "E'") {
+            else if (top.value == "E'" || top.value == "Expr_Rest") {
                 // E' -> + T E' | - T E' | epsilon
                 if (currentVal == "+") {
-                    production = {{TERMINAL, "+"}, {NON_TERMINAL, "T"}, {NON_TERMINAL, "E'"}};
-                    ruleName = "E' -> + T E'";
+                    production = {{TERMINAL, "+"}, {NON_TERMINAL, "Term"}, {NON_TERMINAL, "Expr_Rest"}};
+                    ruleName = "Expr_Rest -> Add (+ Term ...)";
                 } else if (currentVal == "-") {
-                    production = {{TERMINAL, "-"}, {NON_TERMINAL, "T"}, {NON_TERMINAL, "E'"}};
-                    ruleName = "E' -> - T E'";
-                } else if (currentVal == ")" || currentVal == "EOF") {
+                    production = {{TERMINAL, "-"}, {NON_TERMINAL, "Term"}, {NON_TERMINAL, "Expr_Rest"}};
+                    ruleName = "Expr_Rest -> Subtract (- Term ...)";
+                } else if (currentVal == ")" || currentVal == "}" || currentVal == "EOF") {
                     production = {{TERMINAL, "epsilon"}};
-                    ruleName = "E' -> epsilon";
+                    ruleName = "Expr_Rest -> End (epsilon)";
                 } else {
                     isError = true;
                 }
             }
-            else if (top.value == "T") {
+            else if (top.value == "T" || top.value == "Term") {
                 // T -> F T'
-                if (currentVal == "id" || currentVal == "num" || currentVal == "(") {
-                    production = {{NON_TERMINAL, "F"}, {NON_TERMINAL, "T'"}};
-                    ruleName = "T -> F T'";
+                if (currentVal == "id" || currentVal == "num" || currentVal == "(" || currentVal == "{") {
+                    production = {{NON_TERMINAL, "Factor"}, {NON_TERMINAL, "Term_Rest"}};
+                    ruleName = "Term -> Factor * Rest";
                 } else {
                     isError = true;
                 }
             }
-            else if (top.value == "T'") {
+            else if (top.value == "T'" || top.value == "Term_Rest") {
                 // T' -> * F T' | / F T' | epsilon
                 if (currentVal == "*") {
-                    production = {{TERMINAL, "*"}, {NON_TERMINAL, "F"}, {NON_TERMINAL, "T'"}};
-                    ruleName = "T' -> * F T'";
+                    production = {{TERMINAL, "*"}, {NON_TERMINAL, "Factor"}, {NON_TERMINAL, "Term_Rest"}};
+                    ruleName = "Term_Rest -> Mult (* Factor ...)";
                 } else if (currentVal == "/") {
-                    production = {{TERMINAL, "/"}, {NON_TERMINAL, "F"}, {NON_TERMINAL, "T'"}};
-                    ruleName = "T' -> / F T'";
-                } else if (currentVal == "+" || currentVal == "-" || currentVal == ")" || currentVal == "EOF") {
+                    production = {{TERMINAL, "/"}, {NON_TERMINAL, "Factor"}, {NON_TERMINAL, "Term_Rest"}};
+                    ruleName = "Term_Rest -> Div (/ Factor ...)";
+                } else if (currentVal == "+" || currentVal == "-" || currentVal == ")" || currentVal == "}" || currentVal == "EOF") {
                     production = {{TERMINAL, "epsilon"}};
-                    ruleName = "T' -> epsilon";
+                    ruleName = "Term_Rest -> End (epsilon)";
                 } else {
                     isError = true;
                 }
             }
-            else if (top.value == "F") {
-                // F -> ( E ) | num | id
+            else if (top.value == "F" || top.value == "Factor") {
+                // F -> ( E ) | { E } | num | id
                 if (currentVal == "(") {
-                    production = {{TERMINAL, "("}, {NON_TERMINAL, "E"}, {TERMINAL, ")"}};
-                    ruleName = "F -> ( E )";
+                    production = {{TERMINAL, "("}, {NON_TERMINAL, "Expr"}, {TERMINAL, ")"}};
+                    ruleName = "Factor -> Group ( Expr )";
+                } else if (currentVal == "{") {
+                     production = {{TERMINAL, "{"}, {NON_TERMINAL, "Expr"}, {TERMINAL, "}"}};
+                     ruleName = "Factor -> Block { Expr }";
                 } else if (currentVal == "num") {
                     production = {{TERMINAL, "num"}};
-                    ruleName = "F -> num";
+                    ruleName = "Factor -> Number";
                 } else if (currentVal == "id") {
                     production = {{TERMINAL, "id"}};
-                    ruleName = "F -> id";
+                    ruleName = "Factor -> Identifier";
                 } else {
                     isError = true;
                 }
             }
             else {
                 isError = true;
-                ruleName = "Unknown Non-Terminal " + top.value;
+                ruleName = "Unknown Symbol " + top.value;
             }
 
             if (!isError) {
@@ -243,7 +262,13 @@ namespace Automata {
                 history.push_back(stepRecord);
                 return true;
             } else {
-                 stepRecord.actionDesc = "Error expanding " + top.value + " with " + currentVal;
+                 if (top.value == ")" || top.value == "(") {
+                     stepRecord.actionDesc = "Error: Mismatched Parentheses. Expected " + top.value;
+                 } else if (top.value == "}" || top.value == "{") {
+                     stepRecord.actionDesc = "Error: Mismatched Block. Expected " + top.value;
+                 } else {
+                     stepRecord.actionDesc = "Stack Error: Cannot expand " + top.value + " with input '" + currentVal + "'";
+                 }
                  history.push_back(stepRecord);
                  return false;
             }

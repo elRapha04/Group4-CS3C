@@ -6,13 +6,15 @@ namespace Automata {
     void Lexer::init() {
         // Simple manual definitions to avoid complex regex logic issues
         
-        addRule("+", TOKEN_OPERATOR_PLUS);
+        addRule("\\+", TOKEN_OPERATOR_PLUS);
         addRule("-", TOKEN_OPERATOR_MINUS);
         addRule("\\*", TOKEN_OPERATOR_MULT);
         addRule("/", TOKEN_OPERATOR_DIV);
         addRule("=", TOKEN_OPERATOR_EQ);
         addRule("\\(", TOKEN_LPAREN);
         addRule("\\)", TOKEN_RPAREN);
+        addRule("\\{", TOKEN_LBRACE);
+        addRule("\\}", TOKEN_RBRACE);
         
         // Numbers: 0-9 sequence
         // Explicitly simple: (0|1|2|3|4|5|6|7|8|9)(0|1|2|3|4|5|6|7|8|9)* 

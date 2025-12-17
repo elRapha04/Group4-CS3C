@@ -9,13 +9,14 @@ namespace Automata {
 
     int RegexParser::priority(char op) {
         if (op == '*') return 3;
+        if (op == '+') return 3; // Same priority as star
         if (op == '.') return 2;
         if (op == '|') return 1;
         return 0;
     }
 
     bool isSpecial(char c) {
-        return c == '*' || c == '|' || c == '.' || c == '(' || c == ')';
+        return c == '*' || c == '+' || c == '|' || c == '.' || c == '(' || c == ')';
     }
 
     std::string RegexParser::preprocessRegex(const std::string& regex) {
@@ -46,13 +47,14 @@ namespace Automata {
 
                 bool c1IsLiteral = !isSpecial(c1);
                 bool c1IsStar = (c1 == '*');
+                bool c1IsPlus = (c1 == '+');
                 bool c1IsClose = (c1 == ')');
                 
                 bool c2IsLiteral = !isSpecial(c2);
                 bool c2IsOpen = (c2 == '(');
                 bool c2IsEscape = (c2 == '\\');
 
-                if ((c1IsLiteral || c1IsStar || c1IsClose) && (c2IsLiteral || c2IsOpen || c2IsEscape)) {
+                if ((c1IsLiteral || c1IsStar || c1IsPlus || c1IsClose) && (c2IsLiteral || c2IsOpen || c2IsEscape)) {
                     res += '.';
                 }
             } else {
@@ -247,6 +249,36 @@ namespace Automata {
                 res.finalStateId = final;
                 
                 stack.push(res);
+            } else if (c == '+') {
+                 if (stack.empty()) continue;
+                 NFA n = stack.top(); stack.pop();
+                 
+                 NFA res;
+                 int start = res.addState(false);
+                 
+                 int offset = res.states.size(); 
+                 for(const auto& s : n.states) {
+                     State news = s; news.id += offset;
+                     for(auto& t : news.transitions) t.targetStateId += offset;
+                     res.states.push_back(news);
+                 }
+                 
+                 int final = res.addState(true);
+                 
+                 int oldStart = n.startStateId + offset;
+                 int oldFinal = n.finalStateId + offset;
+                 
+                 res.states[oldFinal].isFinal = false; // Internalize
+                 
+                 // One or more: Must go through N at least once.
+                 res.addTransition(start, oldStart, '\0'); // Enter N
+                 res.addTransition(oldFinal, final, '\0'); // Exit N
+                 res.addTransition(oldFinal, oldStart, '\0'); // Loop back
+                 
+                 res.startStateId = start;
+                 res.finalStateId = final;
+                 
+                 stack.push(res);
             }
         }
         

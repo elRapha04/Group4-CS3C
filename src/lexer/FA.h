@@ -5,6 +5,8 @@
 #include <string>
 #include <memory>
 #include <iostream>
+#include <algorithm>
+#include <queue>
 
 namespace Automata {
 
@@ -20,6 +22,8 @@ namespace Automata {
         TOKEN_OPERATOR_EQ,
         TOKEN_LPAREN,
         TOKEN_RPAREN,
+        TOKEN_LBRACE,
+        TOKEN_RBRACE,
         TOKEN_UNKNOWN,
         TOKEN_EOF
     };
@@ -34,23 +38,31 @@ namespace Automata {
     struct Transition {
         char input; // '\0' for Epsilon
         int targetStateId;
+        
+        bool operator<(const Transition& other) const {
+            if (input != other.input) return input < other.input;
+            return targetStateId < other.targetStateId;
+        }
+        bool operator==(const Transition& other) const {
+            return input == other.input && targetStateId == other.targetStateId;
+        }
     };
 
     struct State {
         int id;
         bool isFinal;
         std::vector<Transition> transitions;
-        std::set<int> nfaStateIds; // For DFA debugging: which NFA states does this map to?
+        std::set<int> nfaStateIds; // For DFA debugging
     };
 
-    class NFA {
+    class AutomatonBase {
     public:
         std::vector<State> states;
         int startStateId;
-        int finalStateId;
+        int finalStateId; // Only for NFA typically, but base keeps it valid
 
-        NFA() : startStateId(0), finalStateId(0) {}
-        
+        AutomatonBase() : startStateId(0), finalStateId(0) {}
+
         int addState(bool isFinal = false) {
             State s;
             s.id = (int)states.size();
@@ -60,24 +72,100 @@ namespace Automata {
         }
 
         void addTransition(int from, int to, char input) {
-            if (from < states.size()) {
+            if (from < (int)states.size()) {
                 states[from].transitions.push_back({input, to});
             }
         }
+
+        void optimize() {
+            if (states.empty()) return;
+
+            // 1. Remove Duplicate Transitions
+            for(auto& s : states) {
+                std::sort(s.transitions.begin(), s.transitions.end());
+                s.transitions.erase(std::unique(s.transitions.begin(), s.transitions.end()), s.transitions.end());
+            }
+
+            // 2. Remove Unreachable States (BFS)
+            std::set<int> reachable;
+            std::queue<int> q;
+            
+            if (startStateId < (int)states.size()) {
+                q.push(startStateId);
+                reachable.insert(startStateId);
+            }
+
+            while(!q.empty()) {
+                int u = q.front(); q.pop();
+                if (u >= (int)states.size()) continue;
+
+                for(const auto& t : states[u].transitions) {
+                    if (reachable.find(t.targetStateId) == reachable.end()) {
+                        reachable.insert(t.targetStateId);
+                        q.push(t.targetStateId);
+                    }
+                }
+            }
+
+            // Rebuild States
+            std::vector<State> newStates;
+            std::map<int, int> oldToNew;
+            
+            // Should valid states strictly be reachable? Yes.
+            // But we must preserve startStateId at index 0? Not necessarily, but cleaner.
+            
+            // Map Start First
+            if (reachable.count(startStateId)) {
+                oldToNew[startStateId] = 0;
+                State newStart = states[startStateId];
+                newStart.id = 0;
+                newStates.push_back(newStart);
+            } else {
+                // Empty automaton or invalid start?
+                states.clear();
+                return; 
+            }
+
+            for(int i=0; i<(int)states.size(); i++) {
+                if (i == startStateId) continue;
+                if (reachable.count(i)) {
+                    int newId = (int)newStates.size();
+                    oldToNew[i] = newId;
+                    State s = states[i];
+                    s.id = newId;
+                    newStates.push_back(s);
+                }
+            }
+            
+            // Update Transitions
+            for(auto& s : newStates) {
+                for(auto& t : s.transitions) {
+                    if (oldToNew.count(t.targetStateId)) {
+                        t.targetStateId = oldToNew[t.targetStateId];
+                    } else {
+                        // Should not happen if logic is correct
+                        t.targetStateId = 0; // fallback
+                    }
+                }
+            }
+
+            // Update Metadata
+            startStateId = oldToNew[startStateId];
+            if (oldToNew.count(finalStateId)) finalStateId = oldToNew[finalStateId];
+            else finalStateId = -1; // Final state was unreachable?
+
+            states = newStates;
+        }
     };
 
-    class DFA {
+    class NFA : public AutomatonBase {};
+
+    class DFA : public AutomatonBase {
     public:
-        std::vector<State> states;
-        int startStateId;
         // Keep track of which token type this final state recognizes
         std::map<int, TokenType> stateTokenMap; 
 
-        DFA() : startStateId(0) {}
-        
         // Simulates the input on this DFA.
-        // Returns the final state reached, or -1 if stuck.
-        // Updates lastFinalState and lastInputIndex to track the longest match prefix.
         int simulate(const std::string& input, int& lastFinalState, int& lastInputIndex) {
             int currentState = startStateId;
             lastFinalState = -1;
@@ -112,6 +200,87 @@ namespace Automata {
             }
             
             return currentState;
+        }
+        
+        void optimize() {
+            if (states.empty()) return;
+
+            // 1. Remove Duplicate Transitions
+            for(auto& s : states) {
+                std::sort(s.transitions.begin(), s.transitions.end());
+                s.transitions.erase(std::unique(s.transitions.begin(), s.transitions.end()), s.transitions.end());
+            }
+
+            // 2. Remove Unreachable States (BFS)
+            std::set<int> reachable;
+            std::queue<int> q;
+            
+            if (startStateId < (int)states.size()) {
+                q.push(startStateId);
+                reachable.insert(startStateId);
+            }
+
+            while(!q.empty()) {
+                int u = q.front(); q.pop();
+                if (u >= (int)states.size()) continue;
+
+                for(const auto& t : states[u].transitions) {
+                    if (reachable.find(t.targetStateId) == reachable.end()) {
+                        reachable.insert(t.targetStateId);
+                        q.push(t.targetStateId);
+                    }
+                }
+            }
+
+            std::vector<State> newStates;
+            std::map<int, int> oldToNew;
+            std::map<int, TokenType> newTokenMap;
+            
+            if (reachable.count(startStateId)) {
+                oldToNew[startStateId] = 0;
+                State newStart = states[startStateId];
+                newStart.id = 0;
+                newStates.push_back(newStart);
+                
+                if (stateTokenMap.count(startStateId)) {
+                    newTokenMap[0] = stateTokenMap[startStateId];
+                }
+            } else {
+                states.clear();
+                return;
+            }
+
+            for(int i=0; i<(int)states.size(); i++) {
+                if (i == startStateId) continue;
+                if (reachable.count(i)) {
+                    int newId = (int)newStates.size();
+                    oldToNew[i] = newId;
+                    State s = states[i];
+                    s.id = newId;
+                    newStates.push_back(s);
+                    
+                    if (stateTokenMap.count(i)) {
+                        newTokenMap[newId] = stateTokenMap[i];
+                    }
+                }
+            }
+            
+            for(auto& s : newStates) {
+                for(auto& t : s.transitions) {
+                    if (oldToNew.count(t.targetStateId)) {
+                        t.targetStateId = oldToNew[t.targetStateId];
+                    } else {
+                        t.targetStateId = 0;
+                    }
+                }
+            }
+
+            startStateId = oldToNew[startStateId];
+            if (oldToNew.count(finalStateId)) finalStateId = oldToNew[finalStateId];
+            else finalStateId = -1;
+
+            states = newStates;
+            stateTokenMap = newTokenMap;
         }
     };
 }
