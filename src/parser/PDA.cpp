@@ -234,8 +234,8 @@ namespace Automata {
                     production = {{TERMINAL, "("}, {NON_TERMINAL, "Expr"}, {TERMINAL, ")"}};
                     ruleName = "Factor -> Group ( Expr )";
                 } else if (currentVal == "{") {
-                     production = {{TERMINAL, "{"}, {NON_TERMINAL, "Expr"}, {TERMINAL, "}"}};
-                     ruleName = "Factor -> Block { Expr }";
+                     production = {{TERMINAL, "{"}, {NON_TERMINAL, "Statement"}, {TERMINAL, "}"}};
+                     ruleName = "Factor -> Block { Statement }";
                 } else if (currentVal == "num") {
                     production = {{TERMINAL, "num"}};
                     ruleName = "Factor -> Number";

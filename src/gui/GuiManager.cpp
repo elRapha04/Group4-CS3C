@@ -65,137 +65,162 @@ namespace GUI {
         float x = viewport->Pos.x;
         float y = viewport->Pos.y;
 
-        // 3-Column Layout:
-        // Col 1 (20%): Source Code (Top 50%) + Tokens (Bottom 50%)
-        // Col 2 (50%): Regex Playground (Automata)
-        // Col 3 (30%): PDA
-        
-        float w1 = w * 0.20f;
-        float w2 = w * 0.50f;
-        float w3 = w * 0.30f;
-        
-        // Ensure total width <= w due to float rounding
-        if (w1 + w2 + w3 > w) w3 = w - w1 - w2;
+        // Persist collapse state
+        static bool isLeftCollapsed = false;
+        static bool isRightCollapsed = false;
 
+        // Dynamic widths based on collapse state
+        // If collapsed, reserve small width (e.g. 50px) for the vertical title bar or just the bar itself.
+        // ImGui collapsed window is just the title bar height usually.
+        // We will reserve 30px for collapsed width to indicate presence.
+        float w1 = isLeftCollapsed ? 30.0f : w * 0.20f;
+        float w3 = isRightCollapsed ? 30.0f : w * 0.30f;
+        float w2 = w - w1 - w3; // Middle takes remaining space
+        
         float h1 = h * 0.5f;
 
-        // Flags: Rigid layout to prevent overlap as requested.
-        // User wants "fitting in screen" and "no overlap". 
-        // We sacrifice custom adjustability for layout stability because manual window management is fragile.
-        ImGuiWindowFlags panFlags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
+        // Flags: Remove NoCollapse to allow user interaction
+        ImGuiWindowFlags panFlags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize; 
+        // Note: NoCollapse removed.
 
-        // -- Column 1 --
+        // -- Column 1: Source & Tokens --
         ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(w1, h1), ImGuiCond_Always);
-        drawCodeEditor(); 
+        if (!isLeftCollapsed) {
+            ImGui::SetNextWindowSize(ImVec2(w1, h1), ImGuiCond_Always);
+        }
+        
+        // We handle Source Code collapse as the master for "Left Panel"
+        // Actually, we have 2 windows in Left Panel.
+        // If "Source Code" is collapsed, we treat the whole left column as collapsed?
+        // Or we let them collapse individually?
+        // User asked for "Left panels".
+        // Let's link them: if one collapses, we consider the column collapsed for layout purposes?
+        // Better: Collapsing Source Code collapses the width. Tokens will follow.
+        
+        // Window 1: Source Code
+        ImGui::Begin("Source Code##Editor", NULL, panFlags);
+        isLeftCollapsed = ImGui::IsWindowCollapsed();
+        
+        // Draw Source Code Content
+        if (!isLeftCollapsed) {
+             ImGui::InputTextMultiline("##source", codeBuffer, IM_ARRAYSIZE(codeBuffer), ImVec2(-FLT_MIN, -30));
+             if (ImGui::Button("Compile & Run", ImVec2(-FLT_MIN, 0))) {
+                sourceCode = std::string(codeBuffer);
+                if (!sourceCode.empty()) {
+                    tokens = lexer.tokenize(sourceCode);
+                    pda.loadInput(tokens);
+                    parserStepIndex = 0;
+                }
+             }
+        }
+        ImGui::End();
 
+        // Window 2: Tokens
+        // If Left Column is collapsed, we might hide Tokens or keep it small?
+        // If Source is collapsed, w1 is 30. Tokens window at size (30, h) is useless.
+        // So we should force Tokens to match state.
+        // We can't easily force collapse via API without SetNextWindowCollapsed.
+        // But we can just hide it or render it small.
+        // Let's SetNextWindowCollapsed based on isLeftCollapsed?
+        ImGui::SetNextWindowCollapsed(isLeftCollapsed, ImGuiCond_Always);
+        
         ImGui::SetNextWindowPos(ImVec2(x, y + h1), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(w1, h - h1), ImGuiCond_Always);
-        drawTokenTable();
+        if (!isLeftCollapsed) {
+            ImGui::SetNextWindowSize(ImVec2(w1, h - h1), ImGuiCond_Always);
+        }
+        
+        ImGui::Begin("Tokens##Table", NULL, panFlags);
+        if (!isLeftCollapsed) {
+            if (ImGui::BeginTable("TokenTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {
+                ImGui::TableSetupColumn("Type");
+                ImGui::TableSetupColumn("Value");
+                ImGui::TableHeadersRow();
+                for (const auto& t : tokens) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%s", getTokenName(t.type)); 
+                    ImGui::TableNextColumn();
+                    ImGui::TextWrapped("%s", t.value.c_str());
+                }
+                ImGui::EndTable();
+            }
+        }
+        ImGui::End();
 
-        // -- Column 2 --
+        // -- Column 2: Automata Playground --
         ImGui::SetNextWindowPos(ImVec2(x + w1, y), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(w2, h), ImGuiCond_Always);
         drawRegexPlayground();
 
-        // -- Column 3 --
+        // -- Column 3: PDA --
         ImGui::SetNextWindowPos(ImVec2(x + w1 + w2, y), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(w3, h), ImGuiCond_Always);
-        drawParserView();
+        if (!isRightCollapsed) {
+            ImGui::SetNextWindowSize(ImVec2(w3, h), ImGuiCond_Always);
+        }
+        
+        ImGui::Begin("Syntactic Analysis (PDA)##View", NULL, panFlags);
+        isRightCollapsed = ImGui::IsWindowCollapsed();
+        
+        if (!isRightCollapsed) {
+             if (pda.inputTokens.empty()) {
+                  ImGui::TextWrapped("Compile code to load PDA.");
+             } else {
+                  if (ImGui::Button("Step Forward")) {
+                      pda.step();
+                      parserStepIndex = pda.history.size() - 1;
+                  }
+                  ImGui::SameLine();
+                  if (ImGui::Button("Run All")) {
+                      while(pda.step());
+                      parserStepIndex = pda.history.size() - 1;
+                  }
+                  ImGui::SameLine();
+                  if (ImGui::Button("Reset")) {
+                      pda.reset();
+                      pda.inputTokens = tokens; 
+                      parserStepIndex = 0;
+                  }
+                  
+                  ImGui::Separator();
+                  
+                  if (!pda.history.empty()) {
+                      ImGui::SliderInt("History", &parserStepIndex, 0, (int)pda.history.size() - 1);
+                      if (parserStepIndex >= 0 && parserStepIndex < (int)pda.history.size()) {
+                          const auto& step = pda.history[parserStepIndex];
+                          ImGui::TextColored(ImVec4(1, 1, 0, 1), "Action: %s", step.actionDesc.c_str());
+                          ImGui::Text("Input: %s", step.currentInput.value.c_str());
+                          ImGui::Separator();
+                          ImGui::Text("Stack (Top is Top):");
+                          if (ImGui::BeginChild("StackView", ImVec2(0, 0), true)) {
+                              for (int i = (int)step.stackSnapshot.size() - 1; i >= 0; i--) {
+                                  std::string val = step.stackSnapshot[i].value;
+                                  if (i == step.stackSnapshot.size() - 1) ImGui::TextColored(ImVec4(0,1,0,1), "[TOP] %s", val.c_str());
+                                  else ImGui::Text("      %s", val.c_str());
+                              }
+                              ImGui::EndChild();
+                          }
+                      }
+                  } else {
+                      ImGui::Text("Ready.");
+                      ImGui::Text("Next Input: %s", (pda.currentTokenIndex < pda.inputTokens.size()) ? pda.inputTokens[pda.currentTokenIndex].value.c_str() : "End");
+                  }
+                  if (pda.isSuccess) ImGui::TextColored(ImVec4(0,1,0,1), "RESULT: VALID");
+                  if (pda.isError) ImGui::TextColored(ImVec4(1,0,0,1), "RESULT: INVALID");
+             }
+        }
+        ImGui::End();
     }
 
     void GuiManager::drawCodeEditor() {
-        ImGui::Begin("Source Code##Editor", NULL, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
-        ImGui::InputTextMultiline("##source", codeBuffer, IM_ARRAYSIZE(codeBuffer), ImVec2(-FLT_MIN, -30)); // Leave room for button
-        
-        if (ImGui::Button("Compile & Run", ImVec2(-FLT_MIN, 0))) {
-            sourceCode = std::string(codeBuffer);
-            if (!sourceCode.empty()) {
-                tokens = lexer.tokenize(sourceCode);
-                pda.loadInput(tokens);
-                // Reset PDA on compile
-                parserStepIndex = 0;
-            }
-        }
-        ImGui::End();
+         // Moved inline to renderUI to share collapse state
     }
 
     void GuiManager::drawTokenTable() {
-        ImGui::Begin("Tokens##Table", NULL, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
-        if (ImGui::BeginTable("TokenTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {
-            ImGui::TableSetupColumn("Type");
-            ImGui::TableSetupColumn("Value");
-            ImGui::TableHeadersRow();
-            for (const auto& t : tokens) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::Text("%s", getTokenName(t.type)); 
-                ImGui::TableNextColumn();
-                ImGui::TextWrapped("%s", t.value.c_str());
-            }
-            ImGui::EndTable();
-        }
-        ImGui::End();
+         // Moved inline
     }
-
+    
     void GuiManager::drawParserView() {
-        ImGui::Begin("Syntactic Analysis (PDA)##View", NULL, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
-        
-        if (pda.inputTokens.empty()) {
-             ImGui::TextWrapped("Compile code to load PDA.");
-        } else {
-             if (ImGui::Button("Step Forward")) {
-                 pda.step();
-                 parserStepIndex = pda.history.size() - 1;
-             }
-             ImGui::SameLine();
-             if (ImGui::Button("Run All")) {
-                 while(pda.step());
-                 parserStepIndex = pda.history.size() - 1;
-             }
-             ImGui::SameLine();
-             if (ImGui::Button("Reset")) {
-                 pda.reset();
-                 pda.inputTokens = tokens; // Reload tokens
-                 parserStepIndex = 0;
-             }
-             
-             ImGui::Separator();
-             
-             if (!pda.history.empty()) {
-                 ImGui::SliderInt("History", &parserStepIndex, 0, (int)pda.history.size() - 1);
-                 
-                 if (parserStepIndex >= 0 && parserStepIndex < (int)pda.history.size()) {
-                     const auto& step = pda.history[parserStepIndex];
-                     
-                     ImGui::TextColored(ImVec4(1, 1, 0, 1), "Action: %s", step.actionDesc.c_str());
-                     ImGui::Text("Input: %s", step.currentInput.value.c_str());
-                     
-                     ImGui::Separator();
-                     ImGui::Text("Stack (Top is Top):");
-                     
-                     if (ImGui::BeginChild("StackView", ImVec2(0, 0), true)) {
-                         for (int i = (int)step.stackSnapshot.size() - 1; i >= 0; i--) {
-                             std::string val = step.stackSnapshot[i].value;
-                             if (i == step.stackSnapshot.size() - 1) {
-                                 ImGui::TextColored(ImVec4(0,1,0,1), "[TOP] %s", val.c_str());
-                             } else {
-                                 ImGui::Text("      %s", val.c_str());
-                             }
-                         }
-                         ImGui::EndChild();
-                     }
-                 }
-             } else {
-                 ImGui::Text("Ready.");
-                 ImGui::Text("Next Input: %s", (pda.currentTokenIndex < pda.inputTokens.size()) ? pda.inputTokens[pda.currentTokenIndex].value.c_str() : "End");
-             }
-             
-             if (pda.isSuccess) ImGui::TextColored(ImVec4(0,1,0,1), "RESULT: VALID");
-             if (pda.isError) ImGui::TextColored(ImVec4(1,0,0,1), "RESULT: INVALID");
-        }
-        
-        ImGui::End();
+         // Moved inline
     }
 
     void GuiManager::drawAutomaton(const std::vector<Automata::State>& states, int startId, const char* label, std::map<int, ImVec2>& positions, bool isNFA) {
@@ -210,18 +235,76 @@ namespace GUI {
         
         ImGui::InvisibleButton("canvas", canvas_sz);
         
-        // Init positions
+        // Init positions with BFS Layered Layout (Ranked)
         if (positions.empty() && !states.empty()) {
-            ImVec2 center = ImVec2(canvas_p.x + canvas_sz.x * 0.5f, canvas_p.y + canvas_sz.y * 0.5f);
-            float radius = std::min(canvas_sz.x, canvas_sz.y) * 0.35f;
-            int count = (int)states.size();
-            for(int i=0; i<count; i++) {
-                float angle = (float)i / (float)count * 6.28f;
-                // Place Start node at Left (Pi)
-                if (states[i].id == startId) angle = 3.14f;
-                
-                positions[states[i].id] = ImVec2(center.x + cos(angle) * radius, center.y + sin(angle) * radius);
-            }
+             // 1. Build Adjacency and ID Map
+             std::map<int, std::vector<int>> adj;
+             for(const auto& s : states) {
+                 for(const auto& t : s.transitions) {
+                     adj[s.id].push_back(t.targetStateId);
+                 }
+             }
+             
+             // 2. BFS for Depth
+             std::map<int, int> depths;
+             std::queue<int> q;
+             std::set<int> visited;
+             
+             q.push(startId);
+             visited.insert(startId);
+             depths[startId] = 0;
+             
+             int maxDepth = 0;
+             
+             while(!q.empty()) {
+                 int u = q.front(); q.pop();
+                 maxDepth = std::max(maxDepth, depths[u]);
+                 
+                 if (adj.find(u) != adj.end()) {
+                     for(int v : adj[u]) {
+                         if (visited.find(v) == visited.end()) {
+                             visited.insert(v);
+                             depths[v] = depths[u] + 1;
+                             q.push(v);
+                         }
+                     }
+                 }
+             }
+
+             // Handle disconnected components (orphans) - assign them to depth 0 or maxDepth+1
+             for(const auto& s : states) {
+                 if (visited.find(s.id) == visited.end()) {
+                     depths[s.id] = 0; 
+                 }
+             }
+             
+             // 3. Group by Depth
+             std::map<int, std::vector<int>> levels;
+             for(auto const& [id, d] : depths) {
+                 levels[d].push_back(id);
+             }
+             
+             // 4. Assign Positions
+             // X spacing: 80 - 100
+             // Y spacing: 60 - 80
+             float xSpacing = 100.0f;
+             float ySpacing = 80.0f;
+             
+             // Center mapping
+             float totalWidth = (maxDepth + 1) * xSpacing;
+             float startX = (canvas_sz.x - totalWidth) * 0.5f;
+             if (startX < 50.0f) startX = 50.0f;
+             
+             for(auto const& [d, nodeIds] : levels) {
+                 float x = startX + d * xSpacing;
+                 float totalHeight = nodeIds.size() * ySpacing;
+                 float startY = (canvas_sz.y - totalHeight) * 0.5f + canvas_p.y + 20.0f; // +20 margin
+                 
+                 for(int i=0; i<(int)nodeIds.size(); i++) {
+                     int id = nodeIds[i];
+                     positions[id] = ImVec2(canvas_p.x + x, startY + i * ySpacing);
+                 }
+             }
         }
 
         float nodeRadius = 20.0f;
@@ -241,44 +324,55 @@ namespace GUI {
              if (positions.find(s.id) == positions.end()) continue;
              ImVec2 p1 = positions[s.id];
              
+             // Group transitions by target state using Set for unique labels
+             std::map<int, std::set<std::string>> targetLabels;
              for (const auto& t : s.transitions) {
-                 if (positions.find(t.targetStateId) != positions.end()) {
-                     ImVec2 p2 = positions[t.targetStateId];
-                     
-                     // Helper for self-loop
-                     if (s.id == t.targetStateId) {
-                         // Make loop larger and easier to see
-                         float loopH = nodeRadius * 3.5f;
-                         float loopW = nodeRadius * 2.0f;
-                         
-                         draw_list->AddBezierCubic(
-                             ImVec2(p1.x - loopW * 0.5f, p1.y - nodeRadius),      // Start (Left-ish top)
-                             ImVec2(p1.x - loopW, p1.y - loopH),                  // Control 1 (Far Left up)
-                             ImVec2(p1.x + loopW, p1.y - loopH),                  // Control 2 (Far Right up)
-                             ImVec2(p1.x + loopW * 0.5f, p1.y - nodeRadius),      // End (Right-ish top)
-                             IM_COL32(200,200,200,255), 2.0f
-                         );
-                         char l[2] = { t.input == '\0' ? 'E' : t.input, '\0' };
-                         draw_list->AddText(ImVec2(p1.x - 5, p1.y - loopH - 10), IM_COL32(255,255,0,255), l);
-                         continue;
-                     }
-
-                     float angle = atan2(p2.y - p1.y, p2.x - p1.x);
-                     ImVec2 start = ImVec2(p1.x + cos(angle)*nodeRadius, p1.y + sin(angle)*nodeRadius);
-                     ImVec2 end = ImVec2(p2.x - cos(angle)*nodeRadius, p2.y - sin(angle)*nodeRadius);
-                     
-                     draw_list->AddLine(start, end, IM_COL32(200, 200, 200, 255), 2.0f);
-                     
-                     float arrowLen = 10.0f;
-                     ImVec2 arrow1 = ImVec2(end.x - cos(angle + 0.5)*arrowLen, end.y - sin(angle + 0.5)*arrowLen);
-                     ImVec2 arrow2 = ImVec2(end.x - cos(angle - 0.5)*arrowLen, end.y - sin(angle - 0.5)*arrowLen);
-                     draw_list->AddTriangleFilled(end, arrow1, arrow2, IM_COL32(200, 200, 200, 255));
-
-                     ImVec2 mid = ImVec2((start.x+end.x)*0.5f, (start.y+end.y)*0.5f);
-                     mid.y -= 15.0f; 
-                     char l[2] = { t.input == '\0' ? 'E' : t.input, '\0' };
-                     draw_list->AddText(mid, IM_COL32(255, 255, 0, 255), l);
+                 if (positions.find(t.targetStateId) == positions.end()) continue;
+                 std::string label = (t.input == '\0') ? "eps" : std::string(1, t.input);
+                 targetLabels[t.targetStateId].insert(label);
+             }
+             
+             // Render aggregated links
+             for (auto const& [tid, labels] : targetLabels) {
+                 ImVec2 p2 = positions[tid];
+                 
+                 // Construct Label String
+                 std::string labelStr = "";
+                 for(const auto& l : labels) {
+                     if (!labelStr.empty()) labelStr += ", ";
+                     labelStr += l;
                  }
+                 
+                 // Self-loop
+                 if (s.id == tid) {
+                     float loopH = nodeRadius * 3.5f;
+                     float loopW = nodeRadius * 2.5f;
+                     
+                     draw_list->AddBezierCubic(
+                         ImVec2(p1.x - loopW * 0.5f, p1.y - nodeRadius),
+                         ImVec2(p1.x - loopW, p1.y - loopH),
+                         ImVec2(p1.x + loopW, p1.y - loopH),
+                         ImVec2(p1.x + loopW * 0.5f, p1.y - nodeRadius),
+                         IM_COL32(200,200,200,255), 2.0f
+                     );
+                     draw_list->AddText(ImVec2(p1.x - 10, p1.y - loopH - 12), IM_COL32(255,255,0,255), labelStr.c_str());
+                     continue;
+                 }
+
+                 float angle = atan2(p2.y - p1.y, p2.x - p1.x);
+                 ImVec2 start = ImVec2(p1.x + cos(angle)*nodeRadius, p1.y + sin(angle)*nodeRadius);
+                 ImVec2 end = ImVec2(p2.x - cos(angle)*nodeRadius, p2.y - sin(angle)*nodeRadius);
+                 
+                 draw_list->AddLine(start, end, IM_COL32(200, 200, 200, 255), 2.0f);
+                 
+                 float arrowLen = 10.0f;
+                 ImVec2 arrow1 = ImVec2(end.x - cos(angle + 0.5)*arrowLen, end.y - sin(angle + 0.5)*arrowLen);
+                 ImVec2 arrow2 = ImVec2(end.x - cos(angle - 0.5)*arrowLen, end.y - sin(angle - 0.5)*arrowLen);
+                 draw_list->AddTriangleFilled(end, arrow1, arrow2, IM_COL32(200, 200, 200, 255));
+
+                 ImVec2 mid = ImVec2((start.x+end.x)*0.5f, (start.y+end.y)*0.5f);
+                 mid.y -= 15.0f; 
+                 draw_list->AddText(mid, IM_COL32(255, 255, 0, 255), labelStr.c_str());
              }
         }
 
