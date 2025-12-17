@@ -5,6 +5,7 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#include <cstdio> // for snprintf
 
 // Buffers
 static char codeBuffer[1024 * 16] = "x = 10 + 20";
@@ -19,13 +20,14 @@ namespace GUI {
         lexer.init();
         // Init default debug NFA
         debugNFA = Automata::RegexParser::toNFA(Automata::RegexParser::toPostfix(regexBuffer));
-        debugDFA = Automata::RegexParser::toDFA(debugNFA, TOKEN_UNKNOWN);
+        debugDFA = Automata::RegexParser::toDFA(debugNFA, Automata::TOKEN_UNKNOWN);
         hasDebugData = true;
         return true;
     }
 
     void GuiManager::renderUI() {
-        ImGui::DockSpaceOverViewport(ImGui::GetMainViewport());
+        // Removed DockSpaceOverViewport as it requires docking branch
+        // ImGui::DockSpaceOverViewport(ImGui::GetMainViewport());
         
         drawCodeEditor();
         drawTokenTable();
@@ -34,7 +36,7 @@ namespace GUI {
     }
 
     void GuiManager::drawCodeEditor() {
-        ImGui::Begin("Source Code");
+        ImGui::Begin("Source Code", NULL, ImGuiWindowFlags_None);
         ImGui::InputTextMultiline("##source", codeBuffer, IM_ARRAYSIZE(codeBuffer), ImVec2(-FLT_MIN, 200));
         
         if (ImGui::Button("Compile & Run")) {
@@ -49,7 +51,7 @@ namespace GUI {
     }
 
     void GuiManager::drawTokenTable() {
-        ImGui::Begin("Tokens");
+        ImGui::Begin("Tokens", NULL, ImGuiWindowFlags_None);
         if (ImGui::BeginTable("TokenTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
             ImGui::TableSetupColumn("Type");
             ImGui::TableSetupColumn("Value");
@@ -58,7 +60,7 @@ namespace GUI {
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 // Simple mapping...
-                ImGui::Text("%d", t.type); 
+                ImGui::Text("%d", (int)t.type); 
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", t.value.c_str());
             }
@@ -68,7 +70,7 @@ namespace GUI {
     }
 
     void GuiManager::drawParserView() {
-        ImGui::Begin("Syntactic Analysis (PDA)");
+        ImGui::Begin("Syntactic Analysis (PDA)", NULL, ImGuiWindowFlags_None);
         if (pda.history.empty()) {
             ImGui::Text("No data."); 
             ImGui::End(); 
@@ -78,13 +80,15 @@ namespace GUI {
         // Scrubbing
         ImGui::SliderInt("Step", &parserStepIndex, 0, (int)pda.history.size() - 1);
         
-        const auto& step = pda.history[parserStepIndex];
-        ImGui::TextColored(ImVec4(1,1,0,1), "%s", step.actionDesc.c_str());
-        
-        ImGui::Separator();
-        ImGui::Text("Stack (Top Down):");
-        for (int i = step.stackSnapshot.size() - 1; i >= 0; i--) {
-            ImGui::Text(" [ %s ]", step.stackSnapshot[i].value.c_str());
+        if (parserStepIndex >= 0 && parserStepIndex < (int)pda.history.size()) {
+            const auto& step = pda.history[parserStepIndex];
+            ImGui::TextColored(ImVec4(1,1,0,1), "%s", step.actionDesc.c_str());
+            
+            ImGui::Separator();
+            ImGui::Text("Stack (Top Down):");
+            for (int i = (int)step.stackSnapshot.size() - 1; i >= 0; i--) {
+                ImGui::Text(" [ %s ]", step.stackSnapshot[i].value.c_str());
+            }
         }
         ImGui::End();
     }
@@ -102,7 +106,7 @@ namespace GUI {
         
         // Pre-calc positions
         std::vector<ImVec2> positions(states.size());
-        int count = states.size();
+        int count = (int)states.size();
         for (int i = 0; i < count; i++) {
             float angle = (float)i / (float)count * 6.28f;
             positions[i] = ImVec2(center.x + cos(angle) * radius, center.y + sin(angle) * radius);
@@ -134,7 +138,7 @@ namespace GUI {
              draw_list->AddCircle(positions[i], nodeRadius, IM_COL32(255,255,255,255));
              
              // ID
-             char idBuf[16]; sprintf(idBuf, "%d", states[i].id);
+             char idBuf[16]; snprintf(idBuf, 16, "%d", states[i].id);
              ImVec2 txtPos = ImVec2(positions[i].x - 5, positions[i].y - 5);
              draw_list->AddText(txtPos, IM_COL32(255, 255, 255, 255), idBuf);
         }
@@ -144,7 +148,7 @@ namespace GUI {
     }
 
     void GuiManager::drawRegexPlayground() {
-        ImGui::Begin("Regex Playground");
+        ImGui::Begin("Regex Playground", NULL, ImGuiWindowFlags_None);
         
         ImGui::InputText("Regex", regexBuffer, 256);
         ImGui::SameLine();
@@ -155,7 +159,7 @@ namespace GUI {
                     // Safe guard
                 } else {
                     debugNFA = Automata::RegexParser::toNFA(Automata::RegexParser::toPostfix(r));
-                    debugDFA = Automata::RegexParser::toDFA(debugNFA, TOKEN_UNKNOWN);
+                    debugDFA = Automata::RegexParser::toDFA(debugNFA, Automata::TOKEN_UNKNOWN);
                     hasDebugData = true;
                 }
             } catch(...) {

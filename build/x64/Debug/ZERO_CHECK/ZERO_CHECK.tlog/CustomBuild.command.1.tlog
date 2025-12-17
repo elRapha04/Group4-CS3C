@@ -1,0 +1,10 @@
+^C:\GROUP4-CS3C\BUILD\CMAKEFILES\58C7CB94A76D43CCBA6C54A44A9EA52C\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Group4-CS3C -BC:/Group4-CS3C/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/Group4-CS3C/build/AutomataSimulator.slnx
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

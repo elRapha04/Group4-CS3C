@@ -6,30 +6,30 @@
 #include <memory>
 #include <iostream>
 
-// Token Types for the Lexer
-enum TokenType {
-    TOKEN_INVALID,
-    TOKEN_IDENTIFIER,
-    TOKEN_NUMBER,
-    TOKEN_OPERATOR_PLUS,
-    TOKEN_OPERATOR_MINUS,
-    TOKEN_OPERATOR_MULT,
-    TOKEN_OPERATOR_DIV,
-    TOKEN_OPERATOR_EQ,
-    TOKEN_LPAREN,
-    TOKEN_RPAREN,
-    TOKEN_UNKNOWN,
-    TOKEN_EOF
-};
-
-struct Token {
-    TokenType type;
-    std::string value;
-    int position; 
-    int line;
-};
-
 namespace Automata {
+
+    // Token Types for the Lexer
+    enum TokenType {
+        TOKEN_INVALID,
+        TOKEN_IDENTIFIER,
+        TOKEN_NUMBER,
+        TOKEN_OPERATOR_PLUS,
+        TOKEN_OPERATOR_MINUS,
+        TOKEN_OPERATOR_MULT,
+        TOKEN_OPERATOR_DIV,
+        TOKEN_OPERATOR_EQ,
+        TOKEN_LPAREN,
+        TOKEN_RPAREN,
+        TOKEN_UNKNOWN,
+        TOKEN_EOF
+    };
+
+    struct Token {
+        TokenType type;
+        std::string value;
+        int position; 
+        int line;
+    };
 
     struct Transition {
         char input; // '\0' for Epsilon
@@ -71,9 +71,47 @@ namespace Automata {
         std::vector<State> states;
         int startStateId;
         // Keep track of which token type this final state recognizes
-        // If a state is final for multiple NFA sources (unlikely in simple lexer), priority rules apply
         std::map<int, TokenType> stateTokenMap; 
 
         DFA() : startStateId(0) {}
+        
+        // Simulates the input on this DFA.
+        // Returns the final state reached, or -1 if stuck.
+        // Updates lastFinalState and lastInputIndex to track the longest match prefix.
+        int simulate(const std::string& input, int& lastFinalState, int& lastInputIndex) {
+            int currentState = startStateId;
+            lastFinalState = -1;
+            lastInputIndex = -1;
+
+            if (states.empty()) return -1;
+
+            // Check if initial state is final (empty match)
+            if (states[currentState].isFinal) {
+                lastFinalState = currentState;
+                lastInputIndex = 0;
+            }
+
+            for (int i = 0; i < (int)input.length(); i++) {
+                char c = input[i];
+                bool found = false;
+                
+                for (const auto& t : states[currentState].transitions) {
+                    if (t.input == c) {
+                        currentState = t.targetStateId;
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found) break; // Dead end
+
+                if (states[currentState].isFinal) {
+                    lastFinalState = currentState;
+                    lastInputIndex = i + 1; // Length is index + 1
+                }
+            }
+            
+            return currentState;
+        }
     };
 }

@@ -1,0 +1,3 @@
+C:/Group4-CS3C/build/CMakeFiles/AutomataSimulator.dir
+C:/Group4-CS3C/build/CMakeFiles/ALL_BUILD.dir
+C:/Group4-CS3C/build/CMakeFiles/ZERO_CHECK.dir

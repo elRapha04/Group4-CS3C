@@ -9,43 +9,51 @@ namespace Automata {
 
     int RegexParser::priority(char op) {
         if (op == '*') return 3;
-        if (op == '.') return 2; // Explicit concatenation
+        if (op == '.') return 2;
         if (op == '|') return 1;
         return 0;
     }
 
+    bool isSpecial(char c) {
+        return c == '*' || c == '|' || c == '.' || c == '(' || c == ')';
+    }
+
     std::string RegexParser::preprocessRegex(const std::string& regex) {
         std::string res = "";
-        for (int i = 0; i < regex.length(); i++) {
+        for (int i = 0; i < (int)regex.length(); i++) {
             char c1 = regex[i];
-            if (i + 1 < regex.length()) {
+            
+            if (c1 == '\\') {
+                // Escape: Copy \ and next char
+                res += c1;
+                i++;
+                if (i < (int)regex.length()) res += regex[i];
+                
+                // If next is start of something, add dot
+                if (i + 1 < (int)regex.length()) {
+                    char next = regex[i+1];
+                    bool nextIsOp = (next == '*' || next == '|' || next == ')' || next == '.');
+                    if (!nextIsOp || next == '(') {
+                        res += '.';
+                    }
+                }
+                continue;
+            }
+
+            if (i + 1 < (int)regex.length()) {
                 char c2 = regex[i+1];
                 res += c1;
-                // Add concatenation operator '.' between:
-                // 1. Literal and Literal (a b)
-                // 2. Literal and (
-                // 3. * and Literal
-                // 4. * and (
-                // 5. ) and Literal
-                // 6. ) and (
-                bool isLiteral1 = (c1 != '(' && c1 != '|' && c1 != '.'); // * is a postfix op, so it behaves like a literal ending
-                bool isLiteral2 = (c2 != ')' && c2 != '|' && c2 != '*' && c2 != '.');
+
+                bool c1IsLiteral = !isSpecial(c1);
+                bool c1IsStar = (c1 == '*');
+                bool c1IsClose = (c1 == ')');
                 
-                if (c1 != '(' && c1 != '|' && c2 != ')' && c2 != '|' && c2 != '*') {
-                     // Simplified logic: insert concat if current is not open-group/union and next is not close-group/union/star
-                     // But strictly: 
-                     // a . b
-                     // a . (
-                     // * . a
-                     // * . (
-                     // ) . a
-                     // ) . (
-                     bool c1Valid = (isalnum(c1) || c1 == '*' || c1 == ')');
-                     bool c2Valid = (isalnum(c2) || c2 == '(');
-                     // Note: We are handling simplified regex. Escaping is not handled deeply here for simplicity.
-                     if (c1Valid && c2Valid) {
-                         res += '.';
-                     }
+                bool c2IsLiteral = !isSpecial(c2);
+                bool c2IsOpen = (c2 == '(');
+                bool c2IsEscape = (c2 == '\\');
+
+                if ((c1IsLiteral || c1IsStar || c1IsClose) && (c2IsLiteral || c2IsOpen || c2IsEscape)) {
+                    res += '.';
                 }
             } else {
                 res += c1;
@@ -59,18 +67,31 @@ namespace Automata {
         std::string postfix = "";
         std::stack<char> opStack;
 
-        for (char c : processed) {
-            if (isalnum(c)) {
+        for (int i = 0; i < (int)processed.length(); i++) {
+            char c = processed[i];
+            
+            if (c == '\\') {
                 postfix += c;
-            } else if (c == '(') {
+                i++;
+                if (i < (int)processed.length()) postfix += processed[i];
+            }
+            else if (isalnum(c)) {
+                 postfix += c;
+            }
+            else if (!isSpecial(c)) { 
+                postfix += c;
+            } 
+            else if (c == '(') {
                 opStack.push(c);
-            } else if (c == ')') {
+            } 
+            else if (c == ')') {
                 while (!opStack.empty() && opStack.top() != '(') {
                     postfix += opStack.top();
                     opStack.pop();
                 }
                 if (!opStack.empty()) opStack.pop();
-            } else {
+            } 
+            else {
                 while (!opStack.empty() && priority(opStack.top()) >= priority(c)) {
                     postfix += opStack.top();
                     opStack.pop();
@@ -78,8 +99,13 @@ namespace Automata {
                 opStack.push(c);
             }
         }
+        
+        // Pop remaining operators
         while (!opStack.empty()) {
-            postfix += opStack.top();
+            // Discard opening parentheses that were unmatched
+            if (opStack.top() != '(') {
+                postfix += opStack.top();
+            }
             opStack.pop();
         }
         return postfix;
@@ -88,8 +114,21 @@ namespace Automata {
     NFA RegexParser::toNFA(const std::string& postfix) {
         std::stack<NFA> stack;
 
-        for (char c : postfix) {
-            if (isalnum(c)) { // Literal
+        for (int i = 0; i < (int)postfix.length(); i++) {
+            char c = postfix[i];
+
+            if (c == '\\') {
+                i++;
+                char lit = (i < (int)postfix.length()) ? postfix[i] : '\\';
+                NFA n;
+                int start = n.addState(false);
+                int end = n.addState(true);
+                n.addTransition(start, end, lit);
+                n.startStateId = start;
+                n.finalStateId = end;
+                stack.push(n);
+            }
+            else if (!isSpecial(c)) { 
                 NFA n;
                 int start = n.addState(false);
                 int end = n.addState(true);
@@ -97,52 +136,57 @@ namespace Automata {
                 n.startStateId = start;
                 n.finalStateId = end;
                 stack.push(n);
-            } else if (c == '.') { // Concatenation
+            } 
+            else if (c == '.') { 
+                if (stack.size() < 2) continue;
                 NFA n2 = stack.top(); stack.pop();
                 NFA n1 = stack.top(); stack.pop();
                 
-                // Merge n1 and n2
-                // n1.final -> n2.start (epsilon)
-                // All states of n2 need to be offset by n1.states.size()
+                NFA res = n1; // Use copy, logic below is essentially append
+                // But full deep copy needed for safety due to index shifting
+                res = NFA(); // Clear
                 
-                // We actually copy states to a new NFA to be clean
-                NFA res;
-                int offset1 = 0;
-                for(auto& s : n1.states) {
-                    int id = res.addState(false); 
-                    // Copy transitions
+                int start = res.addState(false); // Dummy start? No, reuse n1 start?
+                // Proper merge:
+                // New logic to ensure clean state IDs
+                
+                // Copy N1
+                int offset1 = res.states.size(); // 0
+                for(const auto& s : n1.states) {
+                    State news = s; news.id += offset1;
+                    for(auto& t : news.transitions) t.targetStateId += offset1;
+                    res.states.push_back(news);
                 }
-                // Wait, simpler approach: Modify n1 to include n2
-                // Merging logic is verbose, let's just append n2's states to n1
                 
-                int offset = n1.states.size();
-                n1.states[n1.finalStateId].isFinal = false; // Old final is no longer final
-                // Add epsilon transition from old final to n2 start
-                
-                // Copy n2 states
+                // Copy N2
+                int offset2 = res.states.size();
                 for(const auto& s : n2.states) {
-                    State newState = s;
-                    newState.id += offset;
-                    for(auto& t : newState.transitions) {
-                        t.targetStateId += offset;
-                    }
-                    n1.states.push_back(newState);
+                    State news = s; news.id += offset2;
+                    for(auto& t : news.transitions) t.targetStateId += offset2;
+                    res.states.push_back(news);
                 }
                 
-                n1.addTransition(n1.finalStateId, n2.startStateId + offset, '\0');
-                n1.finalStateId = n2.finalStateId + offset;
-                n1.states[n1.finalStateId].isFinal = true;
+                // Link N1 Final to N2 Start (Epsilon)
+                int n1FinalMapped = n1.finalStateId + offset1;
+                int n2StartMapped = n2.startStateId + offset2;
                 
-                stack.push(n1);
+                res.states[n1FinalMapped].isFinal = false;
+                res.addTransition(n1FinalMapped, n2StartMapped, '\0');
+                
+                res.startStateId = n1.startStateId + offset1;
+                res.finalStateId = n2.finalStateId + offset2;
+                res.states[res.finalStateId].isFinal = true;
+                
+                stack.push(res);
 
-            } else if (c == '|') { // Union
+            } else if (c == '|') { 
+                if (stack.size() < 2) continue;
                 NFA n2 = stack.top(); stack.pop();
                 NFA n1 = stack.top(); stack.pop();
                 
                 NFA res;
                 int start = res.addState(false);
                 
-                // Copy n1
                 int offset1 = res.states.size();
                 for(const auto& s : n1.states) {
                     State news = s; news.id += offset1;
@@ -150,7 +194,6 @@ namespace Automata {
                     res.states.push_back(news);
                 }
                 
-                // Copy n2
                 int offset2 = res.states.size();
                 for(const auto& s : n2.states) {
                     State news = s; news.id += offset2;
@@ -160,11 +203,9 @@ namespace Automata {
                 
                 int final = res.addState(true);
                 
-                // Start -> n1.start, Start -> n2.start
                 res.addTransition(start, n1.startStateId + offset1, '\0');
                 res.addTransition(start, n2.startStateId + offset2, '\0');
                 
-                // n1.final -> Final, n2.final -> Final
                 res.states[n1.finalStateId + offset1].isFinal = false;
                 res.states[n2.finalStateId + offset2].isFinal = false;
                 
@@ -176,77 +217,60 @@ namespace Automata {
                 
                 stack.push(res);
                 
-            } else if (c == '*') { // Kleene Star
+            } else if (c == '*') { 
+                if (stack.empty()) continue;
                 NFA n = stack.top(); stack.pop();
                 
                 NFA res;
                 int start = res.addState(false);
-                int final = res.addState(true);
                 
-                int offset = res.states.size(); // Current size is 2 (start, final) - wait, no
-                // We add start/final first, so offset is 2? No, let's append N first then wrap
-                
-                // Better order:
-                // NewStart -> OldStart
-                // OldFinal -> OldStart
-                // OldFinal -> NewFinal
-                // NewStart -> NewFinal
-                
-                int oldStart = n.startStateId; 
-                int oldFinal = n.finalStateId;
-                
-                int offsetN = 1; // We added 1 state (start) before N
-                
-                // Logic:
-                // 1. Create structure with new start
-                // 2. Append N
-                // 3. Add new final
-                // 4. Link
-                
-                // Reset res
-                res = NFA();
-                int newStart = res.addState(false);
-                
+                int offset = res.states.size(); 
                 for(const auto& s : n.states) {
-                    State news = s; news.id += 1;
-                    for(auto& t : news.transitions) t.targetStateId += 1;
+                    State news = s; news.id += offset;
+                    for(auto& t : news.transitions) t.targetStateId += offset;
                     res.states.push_back(news);
                 }
                 
-                int newFinal = res.addState(true);
+                int final = res.addState(true);
                 
-                int shiftedOldStart = oldStart + 1;
-                int shiftedOldFinal = oldFinal + 1;
+                int oldStart = n.startStateId + offset;
+                int oldFinal = n.finalStateId + offset;
                 
-                res.states[shiftedOldFinal].isFinal = false;
+                res.states[oldFinal].isFinal = false;
                 
-                res.addTransition(newStart, shiftedOldStart, '\0'); // 1
-                res.addTransition(shiftedOldFinal, shiftedOldStart, '\0'); // 2 (Loop)
-                res.addTransition(shiftedOldFinal, newFinal, '\0'); // 3
-                res.addTransition(newStart, newFinal, '\0'); // 4 (Skip)
+                res.addTransition(start, oldStart, '\0');
+                res.addTransition(oldFinal, oldStart, '\0');
+                res.addTransition(oldFinal, final, '\0');
+                res.addTransition(start, final, '\0');
                 
-                res.startStateId = newStart;
-                res.finalStateId = newFinal;
+                res.startStateId = start;
+                res.finalStateId = final;
                 
                 stack.push(res);
             }
         }
         
+        if (stack.empty()) {
+            NFA empty;
+            empty.addState(true); // Accept Epsilon
+            return empty;
+        }
         return stack.top();
     }
 
-    // Helper for Epsilon Closure
     std::set<int> epsilonClosure(const NFA& nfa, std::set<int> states) {
         std::stack<int> stack;
         for(int s : states) stack.push(s);
         
         while(!stack.empty()) {
             int u = stack.top(); stack.pop();
-            for(const auto& t : nfa.states[u].transitions) {
-                if(t.input == '\0') {
-                    if(states.find(t.targetStateId) == states.end()) {
-                        states.insert(t.targetStateId);
-                        stack.push(t.targetStateId);
+            if (u >= 0 && u < (int)nfa.states.size()) {
+                for(const auto& t : nfa.states[u].transitions) {
+                    if(t.input == '\0') {
+                        if(states.find(t.targetStateId) == states.end()) {
+                            states.insert(t.targetStateId);
+                            stack.push(t.targetStateId);
+                        }
                     }
                 }
             }
@@ -254,13 +278,14 @@ namespace Automata {
         return states;
     }
 
-    // Helper for Move
     std::set<int> move(const NFA& nfa, const std::set<int>& states, char c) {
         std::set<int> result;
         for(int s : states) {
-            for(const auto& t : nfa.states[s].transitions) {
-                if(t.input == c) {
-                    result.insert(t.targetStateId);
+            if (s >= 0 && s < (int)nfa.states.size()) {
+                for(const auto& t : nfa.states[s].transitions) {
+                    if(t.input == c) {
+                        result.insert(t.targetStateId);
+                    }
                 }
             }
         }
@@ -269,20 +294,16 @@ namespace Automata {
 
     DFA RegexParser::toDFA(const NFA& nfa, TokenType type) {
         DFA dfa;
-        
-        // Initial state = E-Closure(NFA start)
+        if (nfa.states.empty()) return dfa;
+
         std::set<int> startSet; 
         startSet.insert(nfa.startStateId);
         startSet = epsilonClosure(nfa, startSet);
-        
-        std::vector<std::set<int>> dfaSets;
-        dfaSets.push_back(startSet);
         
         int startId = dfa.states.size(); // 0
         State startState;
         startState.id = startId;
         startState.nfaStateIds = startSet;
-        // Check if final
         if(startSet.count(nfa.finalStateId)) {
             startState.isFinal = true;
             dfa.stateTokenMap[startId] = type;
@@ -294,7 +315,6 @@ namespace Automata {
         std::queue<int> q;
         q.push(startId);
         
-        // Alphabet inference (usually we pass this, but we can scan the NFA)
         std::set<char> alphabet;
         for(const auto& s : nfa.states) 
             for(const auto& t : s.transitions) 
@@ -308,9 +328,8 @@ namespace Automata {
                 std::set<int> nextSet = epsilonClosure(nfa, move(nfa, currentSet, c));
                 if(nextSet.empty()) continue;
                 
-                // Check if this set exists
                 int existingId = -1;
-                for(int i=0; i<dfa.states.size(); i++) {
+                for(int i=0; i<(int)dfa.states.size(); i++) {
                     if(dfa.states[i].nfaStateIds == nextSet) {
                         existingId = i;
                         break;
@@ -318,9 +337,8 @@ namespace Automata {
                 }
                 
                 if(existingId == -1) {
-                    // Create new state
                     State newState;
-                    newState.id = dfa.states.size();
+                    newState.id = (int)dfa.states.size();
                     newState.nfaStateIds = nextSet;
                     newState.isFinal = (nextSet.count(nfa.finalStateId) > 0);
                     if(newState.isFinal) dfa.stateTokenMap[newState.id] = type;
@@ -330,7 +348,6 @@ namespace Automata {
                     q.push(existingId);
                 }
                 
-                // Add transition
                 dfa.states[currentDfaId].transitions.push_back({c, existingId});
             }
         }
